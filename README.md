@@ -1,10 +1,10 @@
-# 🦀 Braincode Backend: Dual-Database Enterprise REST API
+# Braincode Backend: Dual-Database Enterprise REST API
 
 > **High-Performance Asynchronous Backend in Rust (Axum, Tokio) featuring Clean Architecture and Dual-Database Persistence (PostgreSQL OLTP + ClickHouse OLAP).**
 
 ---
 
-## 📌 Executive Summary
+## Executive Summary
 
 **Braincode Backend** adalah arsitektur REST API tingkat enterprise yang dirancang untuk menangani beban operasional transaksional (*high-integrity OLTP*) sekaligus pencatatan analitik berkecepatan tinggi (*high-throughput OLAP*) secara paralel.
 
@@ -12,7 +12,7 @@ Dibangun dengan prinsip **Clean Architecture (Dependency Inversion Principle)**,
 
 ---
 
-## 🏛️ Architectural Blueprint (Clean Architecture)
+## Architectural Blueprint (Clean Architecture)
 
 Aplikasi mengadopsi 7 layer arsitektur yang terisolasi secara modular:
 
@@ -49,7 +49,7 @@ Aplikasi mengadopsi 7 layer arsitektur yang terisolasi secara modular:
        [( PostgreSQL DB )]             [( ClickHouse OLAP )]
 ```
 
-### 📁 Struktur Direktori Modular
+### Struktur Direktori Modular
 ```text
 src/
 ├── config/           # Parsing environment (.env) & inisialisasi connection pools
@@ -84,7 +84,7 @@ src/
 
 ---
 
-## ⚡ Tech Stack & Engineering Highlights
+## Tech Stack & Engineering Highlights
 
 | Komponen | Teknologi | Alasan Pemilihan & Manfaat Teknis |
 |---|---|---|
@@ -99,7 +99,7 @@ src/
 
 ---
 
-## 🛠️ Desain Pola Rust Khusus (*Key Engineering Patterns*)
+## Desain Pola Rust Khusus (*Key Engineering Patterns*)
 
 ### 1. Resilient Dual-Database Orchestration
 Pada proses pendaftaran pengguna (`register_user`):
@@ -124,7 +124,7 @@ Pada proses pendaftaran pengguna (`register_user`):
 
 ---
 
-## 🗄️ Database Schemas (DDL Requirements)
+## Database Schemas (DDL Requirements)
 
 Pastikan tabel berikut telah dibuat sebelum menjalankan aplikasi:
 
@@ -150,7 +150,7 @@ ORDER BY (timestamp, user_id);
 
 ---
 
-## 🚀 Panduan Menjalankan Aplikasi (*Getting Started*)
+## Panduan Menjalankan Aplikasi (*Getting Started*)
 
 ### 1. Prasyarat
 * [Rust Toolchain](https://www.rust-lang.org/) (versi 1.75 atau lebih baru)
@@ -187,7 +187,7 @@ Server akan aktif mendengarkan request di `http://localhost:3000`.
 
 ---
 
-## 📡 Dokumentasi Endpoint REST API
+## Dokumentasi Endpoint REST API
 
 ### 1. Health Check Probe
 * **Method:** `GET`
@@ -271,7 +271,7 @@ Server akan aktif mendengarkan request di `http://localhost:3000`.
 
 ---
 
-## 👨‍💻 Engineering Notes (Internship Report Context)
+## Engineering Notes (Internship Report Context)
 
 Proyek ini dibangun dan dianalisis secara mendalam sebagai bagian dari program **Data Engineering Internship**. Fokus pembelajaran ditekankan pada pemahaman sistem programming tingkat rendah (*systems data engineering*) untuk mengatasi keterbatasan performa I/O dan konsumsi memori yang biasa dihadapi pada runtime berbasis Python atau JVM.
 
