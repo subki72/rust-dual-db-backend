@@ -1,0 +1,5 @@
+# Clippy strict code quality thresholds (Senior Code Craftsmanship)
+msrv = "1.82.0"
+cognitive-complexity-threshold = 10
+too-many-lines-threshold = 50
+too-many-arguments-threshold = 6
