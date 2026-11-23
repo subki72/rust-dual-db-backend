@@ -1,0 +1,7 @@
+target/
+.git/
+.github/
+.env
+*.csv
+docs/
+test_alarm_service.ps1

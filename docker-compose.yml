@@ -1,0 +1,66 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: braincode-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres_dev_placeholder}
+      POSTGRES_DB: ${POSTGRES_DB:-braincode_db}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./migrations/001_init_postgres_users.sql:/docker-entrypoint-initdb.d/001_init_postgres_users.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-braincode_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.8-alpine
+    container_name: braincode-clickhouse
+    environment:
+      CLICKHOUSE_DB: ${CLICKHOUSE_DB:-default}
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-default}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-}
+    ports:
+      - "8123:8123"
+      - "9000:9000"
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+      - ./migrations/002_init_clickhouse_tables.sql:/docker-entrypoint-initdb.d/002_init_clickhouse_tables.sql:ro
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:8123/ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  braincode-be:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: braincode-be
+    depends_on:
+      postgres:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+    environment:
+      PORT: ${PORT:-3000}
+      RUST_LOG: ${RUST_LOG:-braincode_be=info,tower_http=info}
+      DATABASE_URL: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres_dev_placeholder}@postgres:5432/${POSTGRES_DB:-braincode_db}
+      CLICKHOUSE_URL: http://clickhouse:8123
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-default}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-}
+      CLICKHOUSE_DB: ${CLICKHOUSE_DB:-default}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:3000,http://localhost:5173}
+    ports:
+      - "${PORT:-3000}:3000"
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  clickhouse_data:
