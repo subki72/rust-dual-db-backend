@@ -1,5 +1,5 @@
 # Stage 1: Rust Release Builder
-FROM rust:1.82-slim AS builder
+FROM rust:1.100-slim AS builder
 
 WORKDIR /build
 
