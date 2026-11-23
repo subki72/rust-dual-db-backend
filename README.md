@@ -1,302 +1,202 @@
 # Braincode Backend: Dual-Database Enterprise REST API & Alarm Pipeline
 
-> **High-Performance Asynchronous Backend in Rust (Axum, Tokio) featuring Clean Architecture, Dual-Database Persistence (PostgreSQL OLTP + ClickHouse OLAP), High-Throughput Streaming Ingestion, and Apache Kafka Event Streaming.**
+[![CI Pipeline](https://github.com/subki72/rust-dual-db-backend/actions/workflows/ci.yml/badge.svg)](https://github.com/subki72/rust-dual-db-backend/actions/workflows/ci.yml)
+[![Rust 2021](https://img.shields.io/badge/Rust-Edition%202021-orange.svg)](https://www.rust-lang.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
+> **High-Performance Asynchronous Backend in Rust (Axum, Tokio) featuring Clean Architecture, Dual-Database Persistence (PostgreSQL OLTP + ClickHouse OLAP), High-Throughput Streaming CSV Ingestion, and Production Security Hardening.**
 
 ---
 
 ## Executive Summary
 
-**Braincode Backend** adalah arsitektur REST API tingkat enterprise yang dirancang untuk menangani beban operasional transaksional (*high-integrity OLTP*) sekaligus analitik data skala besar berkecepatan tinggi (*high-throughput OLAP*) dalam industri telekomunikasi (Telkomsel Fixed-Broadband).
+**Braincode Backend** (`braincode-be`) is a production-grade REST API built in Rust to serve transactional workloads (**PostgreSQL 16 OLTP**) alongside high-throughput analytical and telecom network alarm queries (**ClickHouse 24.8 OLAP**).
 
-Dibangun dengan prinsip **Clean Architecture (Dependency Inversion Principle)**, sistem ini memisahkan secara tegas antara kontrak antarmuka (*traits*), orkestrasi bisnis (*services*), dan eksekusi fisik database (*repositories*). Seluruh komponen berjalan di atas runtime multi-threaded **Tokio** dan framework web **Axum** untuk menjamin latensi minimal, efisiensi memori tanpa jeda *Garbage Collector*, serta konkurensi aman bebas *data race*.
+Structured around **Clean Architecture (Dependency Inversion)**, every layer communicates through async trait contracts (`UserService`, `AlarmService`, `UserRepository`, `ActivityRepository`, `AlarmRepository`). This guarantees fast offline unit and HTTP integration testing, predictable zero-GC latency, and clean isolation between HTTP handlers, business rules, and database drivers.
 
 ---
 
-## Architectural Blueprint (Clean Architecture)
-
-Aplikasi mengadopsi 7 layer arsitektur yang terisolasi secara modular:
+## Dual-Database Architecture
 
 ```text
 [ HTTP Client / NOC Frontend / Automated Scripts ]
-                        │
-                        ▼
-┌─────────────────────────────────────────────────────────────┐
-│ 1. PRESENTATION LAYER (`src/handlers/`)                     │
-│    • Axum Extractors: State<Arc<dyn Service>>, Json, Query  │
-│    • health_check, user_handlers, analytics, alarm_handler  │
-└──────────────────────────────┬──────────────────────────────┘
-                               │ (Invokes Service Trait)
-                               ▼
-┌─────────────────────────────────────────────────────────────┐
-│ 2. BUSINESS LOGIC LAYER (`src/services/`)                   │
-│    • Trait Interfaces: UserService, AlarmService            │
-│    • Concrete: UserServiceImpl, AlarmServiceImpl            │
-│    • Fail-Fast Business Validation & Guard Clauses          │
-│    • 100% Unit Test Coverage with Mock Repositories         │
-└──────────────┬──────────────────────────────┬───────────────┘
-               │                              │
+                        |
+                        v
++-------------------------------------------------------------+
+| 1. ROUTER & SECURITY BOUNDARY (src/lib.rs, src/handlers/)   |
+|    - Configurable CORS allowlist (ALLOWED_ORIGINS)          |
+|    - Centralized ErrorHandler JSON fallback (404/4xx/5xx)   |
+|    - Health probe (/health) + REST endpoints                |
++-----------------------------+-------------------------------+
+                              | (Service Trait)
+                              v
++-------------------------------------------------------------+
+| 2. BUSINESS LOGIC & VALIDATION (src/services/, src/utils/)  |
+|    - UserServiceImpl & AlarmServiceImpl                     |
+|    - Shared guard-clause validation (email, dates, fields)  |
+|    - Structured leveled logging (tracing::info/warn/error)  |
++--------------+------------------------------+---------------+
+               |                              |
        (Postgres Trait)               (ClickHouse Trait)
-               │                              │
-               ▼                              ▼
-┌──────────────────────────────┐┌──────────────────────────────┐
-│ 3. PERSISTENCE LAYER (OLTP)  ││ 4. ANALYTICS LAYER (OLAP)    │
-│    • PostgresUserRepository  ││    • ClickHouseAlarmRepo     │
-│    • sqlx (PgPool)           ││    • ClickHouseActivityRepo  │
-│    • Prepared Queries ($1,$2)││    • Binary Streaming Buffer │
-└──────────────┬───────────────┘└──────────────┬───────────────┘
-               │                               │
-               ▼                               ▼
-       [( PostgreSQL DB )]             [( ClickHouse OLAP )]
-                                               │
-                                               ▼
-                              ┌────────────────────────────────┐
-                              │ 5. EVENT STREAMING (KAFKA)     │
-                              │    • Native ClickHouse Engine  │
-                              │    • Topic: alarms-stream      │
-                              │    • Kafdrop Web UI (:9002)    │
-                              └────────────────────────────────┘
+               |                              |
+               v                              v
++------------------------------+ +----------------------------+
+| 3. OLTP PERSISTENCE          | | 4. OLAP ANALYTICS          |
+|    - PostgresUserRepository  | |    - ClickHouseAlarmRepo   |
+|    - sqlx PgPool (10s TO)    | |    - ClickHouseActivityRepo|
+|    - Parameterized ($1, $2)  | |    - ReplacingMergeTree    |
++--------------+---------------+ +------------+---------------+
+               |                              |
+               v                              v
+       [( PostgreSQL 16 )]            [( ClickHouse 24.8 )]
 ```
 
-### Struktur Direktori Modular
+### Repository Layout
+
 ```text
-src/
-├── bin/              # Standalone CLI tools & Ingestion Engines
-│   └── ingest_csv.rs # Streaming CSV Ingestion (194k baris / 461 MB dalam ~18 detik)
-├── config/           # Parsing environment (.env) & inisialisasi connection pools
-│   ├── app_config.rs
-│   └── mod.rs
-├── dtos/             # Data Transfer Objects (Request validation & Response envelopes)
-│   ├── requests/     # Input JSON payload (Deserialize)
-│   │   ├── alarm_active_request.rs
-│   │   ├── create_user_request.rs
-│   │   └── mod.rs
-│   ├── responses/    # Output JSON payload (Serialize & From Trait)
-│   │   ├── alarm_active_response.rs
-│   │   ├── api_response.rs
-│   │   ├── user_response.rs
-│   │   └── mod.rs
-│   └── mod.rs
-├── handlers/         # HTTP Controller endpoints (Axum Extractors & Status codes)
-│   ├── alarm_handler.rs
-│   ├── analytics_handler.rs
-│   ├── health_handler.rs
-│   ├── user_handler.rs
-│   └── mod.rs
-├── models/           # Domain Entities (Database representations)
-│   ├── activity_log.rs
-│   ├── user.rs
-│   └── mod.rs
-├── repositories/     # Data Access Objects (SQLx & ClickHouse clients)
-│   ├── impls/        # Implementasi konkret query & streaming
-│   │   ├── clickhouse_activity_repository.rs
-│   │   ├── clickhouse_alarm_repository.rs
-│   │   ├── postgres_user_repository.rs
-│   │   └── mod.rs
-│   ├── traits/       # Interface kontrak data (Decoupling)
-│   │   ├── activity_repository.rs
-│   │   ├── alarm_repository.rs
-│   │   ├── user_repository.rs
-│   │   └── mod.rs
-│   └── mod.rs
-├── services/         # Domain Business Rules & Orchestration
-│   ├── impls/        # Logika bisnis, validasi, dan unit test mock
-│   │   ├── alarm_service_impl.rs
-│   │   ├── user_service_impl.rs
-│   │   └── mod.rs
-│   ├── traits/       # Interface kontrak bisnis
-│   │   ├── alarm_service.rs
-│   │   ├── user_service.rs
-│   │   └── mod.rs
-│   └── mod.rs
-├── utils/            # Penanganan error global terpusat
-│   ├── errors.rs     # Enum AppError & implementasi Axum IntoResponse
-│   └── mod.rs
-└── main.rs           # Composition Root (Dependency Injection, Routing, TCP Listener)
+rust-dual-db-backend/
+├── .github/
+│   ├── workflows/ci.yml        # fmt, clippy, test, release build, Semgrep, Docker, Trivy
+│   └── dependabot.yml          # Weekly cargo, docker, github-actions updates (no major bumps)
+├── migrations/
+│   ├── 001_init_postgres_users.sql
+│   └── 002_init_clickhouse_tables.sql
+├── src/
+│   ├── bin/ingest_csv.rs       # Streaming CSV -> ClickHouse ingestion binary
+│   ├── config/app_config.rs    # Env loading, DSN redaction, PgPool timeout, ClickHouse client
+│   ├── dtos/                   # Request/Response payloads & envelope types
+│   ├── handlers/               # Axum HTTP handlers
+│   ├── models/                 # Domain entities (User, UserActivity)
+│   ├── repositories/           # Trait contracts & Postgres/ClickHouse implementations
+│   ├── services/               # Business orchestration & validation
+│   ├── utils/
+│   │   ├── errors.rs           # AppError -> IntoResponse with safe external responses
+│   │   └── validation.rs       # redact_dsn, validate_email, validate_date_range, CORS parser
+│   ├── lib.rs                  # Public crate exports, build_app_router, ErrorHandler
+│   └── main.rs                 # Composition root & tracing initialization
+├── tests/                      # 11 offline unit & Axum oneshot HTTP integration test suites
+├── Dockerfile                  # Multi-stage rust:1.82-slim -> debian:bookworm-slim (UID 10001)
+├── docker-compose.yml          # PostgreSQL + ClickHouse + braincode-be stack
+├── Makefile                    # Standardized developer & ops commands
+├── runbook.md                  # Operational runbook & incident playbooks
+├── SECURITY.md                 # Vulnerability disclosure & security controls
+├── CHANGELOG.md                # Release history
+├── CONTRIBUTING.md             # Contribution & quality standards
+└── LICENSE                     # MIT License
 ```
 
 ---
 
-## Tech Stack & Engineering Highlights
+## Tech Stack
 
-| Komponen | Teknologi | Alasan Pemilihan & Manfaat Teknis |
+| Component | Technology | Engineering Rationale |
 |---|---|---|
-| **Bahasa** | **Rust (Edition 2021)** | Menjamin *memory safety*, *fearless concurrency*, dan performa *bare-metal* tanpa jeda *Garbage Collector (GC)*. |
-| **Web Framework** | **Axum 0.7** | Framework modern berbasis ekosistem Tower/Hyper dengan sistem *Type-safe Extractor* yang ergonomis. |
-| **Async Runtime** | **Tokio 1.0** | Engine *multi-threaded work-stealing event loop* teruji untuk menangani puluhan ribu koneksi I/O simultan. |
-| **Relational Database** | **PostgreSQL 16 + SQLx 0.8** | Async SQL toolkit dengan parameter binding (`$1, $2`) untuk integritas transaksional ACID. |
-| **Analytical Engine** | **ClickHouse 24.8** | Database kolumnar OLAP tercepat untuk agregasi ratusan ribu alarm via *vectorized query execution*. |
-| **Message Broker** | **Apache Kafka + Kafdrop** | Buffer pesan asinkronus penahan lonjakan (*shock absorber*) alarm jaringan real-time. |
-| **Serialization** | **Serde & Serde JSON** | Standar industri serialisasi/deserialisasi format JSON *zero-copy*. |
-| **Date & Time** | **Chrono 0.4** | Manipulasi dan validasi tanggal berbasis ISO-8601/RFC-3339. |
-| **Error Handling** | **thiserror 2.0** | Generator error kustom idiomatis yang dipadukan dengan trait `IntoResponse` Axum. |
-| **Telemetry / Log** | **Tracing & Tracing-Subscriber** | Structured logging dengan filter level dinamis berbasis environment (`RUST_LOG`). |
+| **Language** | Rust (Edition 2021, MSRV 1.82) | Memory safety, zero-cost abstractions, predictable tail latency |
+| **Web Framework** | Axum 0.7 + Tower HTTP 0.5 | Type-safe extractors, composable middleware, native `oneshot` testing |
+| **Async Runtime** | Tokio 1.0 | Multi-threaded work-stealing async I/O runtime |
+| **OLTP Database** | PostgreSQL 16 + SQLx 0.8 | ACID transactional storage with parameterized `$1, $2` bindings |
+| **OLAP Database** | ClickHouse 24.8 + `clickhouse` 0.13 | Columnar analytical engine for high-volume activity logs & active alarms |
+| **Observability** | `tracing` + `tracing-subscriber` | Structured leveled logs controlled via `RUST_LOG` |
+| **Error Handling** | `thiserror` 2.0 + `anyhow` 1.0 | Typed domain errors mapped cleanly to HTTP status codes |
 
 ---
 
-## Fitur Utama & Modul Sistem
+## Security Hardening Notes
 
-### 1. Active Alarm Service (GitHub Issue #2)
-Endpoint khusus untuk tim NOC (*Network Operations Center*) memantau gangguan jaringan Fixed-Broadband (FBB) Telkomsel:
-* **Mandatory Active Filter:** Kondisi `cleartime = 0` dikunci paten pada repository layer dan tidak dapat di-override oleh parameter luar.
-* **Date Range Filtering:** Filter rentang tanggal fleksibel pada kolom timestamp `firstoccurrence` menggunakan ekspresi ClickHouse `toDate(intDiv(firstoccurrence, 1000)) BETWEEN toDate(?) AND toDate(?)`.
-* **Guard Clause Validation:** Validasi ketat format ISO `YYYY-MM-DD` dan aturan bisnis `start_date <= end_date`.
-* **Standard Response Envelope:** Format JSON `{ status_code: "200", result: [...], total: N }`.
-
-### 2. High-Throughput Streaming CSV Ingest Engine (`ingest_csv`)
-Engine mandiri di `src/bin/ingest_csv.rs` untuk memuat dump CSV alarm sebesar **461 MB** (194.575 baris × 273 kolom):
-* **Zero Data Loss:** 28 kolom metrik kritis disimpan dalam kolom terindeks, sementara seluruh 273 atribut mentah disimpan utuh dalam kolom `raw_attributes String` (format JSON).
-* **Hemat Memori (RAM < 80 MB):** Menggunakan `BufReader` berkapasitas 256 KB untuk membaca stream baris demi baris tanpa menelan seluruh file ke RAM.
-* **Batch Optimization:** Mengirimkan batch per 15.000 baris langsung ke HTTP interface ClickHouse (`FORMAT JSONEachRow`), selesai dalam ~15-20 detik tanpa memicu error *"Too many parts"*.
-
-### 3. Dual-Database Kafka Streaming Pipeline
-Mengalirkan event alarm real-time antar-database:
-* **Metode A (Application Pipeline via Rust):** ClickHouse $\rightarrow$ Kafka $\rightarrow$ PostgreSQL.
-* **Metode B (Native ClickHouse Kafka Engine):** ClickHouse $\rightarrow$ Kafka $\rightarrow$ ClickHouse (*Zero-Code Backend Pipeline* menggunakan tabel `ENGINE = Kafka` dan `MATERIALIZED VIEW`).
-* **Kafdrop Monitoring:** Pantau status topik, partisi, consumer group, dan lag pesan secara visual di `http://localhost:9002`.
+- **Credential Redaction (`redact_dsn`)**: Startup logs strip PostgreSQL passwords before emitting DSNs via `tracing::info!`.
+- **Explicit CORS Allowlist**: `ALLOWED_ORIGINS` configures `CorsLayer::allow_origin` with explicit origins rather than wildcard permissive CORS.
+- **Database Pool Timeout**: PostgreSQL `PgPoolOptions` enforces a 10-second `acquire_timeout` to fail fast during database outages.
+- **Strict Input Validation**: Shared guard clauses in `src/utils/validation.rs` reject empty fields, malformed emails, invalid ISO `YYYY-MM-DD` dates, and inverted ranges (`start_date > end_date`).
+- **Centralized Error Boundary**: `ErrorHandler` maps unmatched routes to consistent JSON `404` payloads while `AppError` logs detailed database diagnostics internally and returns safe generic messages to clients.
+- **Hardened Container**: Multi-stage `Dockerfile` runs compiled release binaries under non-root `appuser` (UID `10001`) with a `/health` probe.
+- **Continuous Security Automation**: GitHub Actions executes `cargo fmt`, `cargo clippy -D warnings`, `cargo test`, Semgrep Rust SAST, and Trivy container scanning; Dependabot tracks Cargo, Docker, and GitHub Actions advisories weekly.
 
 ---
 
-## Database Schemas (DDL Requirements)
+## Quickstart with Makefile
 
-### 1. PostgreSQL (OLTP)
-```sql
-CREATE TABLE IF NOT EXISTS users (
-    id SERIAL PRIMARY KEY,
-    name VARCHAR(100) NOT NULL,
-    email VARCHAR(150) UNIQUE NOT NULL
-);
-```
+### Prerequisites
 
-### 2. ClickHouse (OLAP)
-Lihat skrip lengkap di [create_table_alarms.sql](create_table_alarms.sql):
-```sql
--- Tabel Analitik User
-CREATE TABLE IF NOT EXISTS default.user_activities (
-    user_id UInt64,
-    action String,
-    details String,
-    timestamp UInt64
-) ENGINE = MergeTree()
-ORDER BY (timestamp, user_id);
+- Rust `1.82+` (`cargo`, `rustfmt`, `clippy`)
+- Docker & Docker Compose (for full dual-database local stack)
 
--- Tabel Master Active Alarms (273 Kolom / Zero Data Loss)
-CREATE TABLE IF NOT EXISTS default.active_alarms
-(
-    identifier String,
-    ticketid Nullable(String),
-    alarmid String,
-    alarmserialnumber String,
-    cleartime Int64,
-    is_active UInt8 MATERIALIZED (if(cleartime = 0, 1, 0)),
-    severity UInt8,
-    ticketstatus Int32,
-    alarmname LowCardinality(String),
-    alarmtext String,
-    alarmtype LowCardinality(String),
-    location LowCardinality(String),
-    sitecode LowCardinality(String),
-    node LowCardinality(String),
-    firstoccurrence Int64,
-    lastoccurrence Int64,
-    alarm_start DateTime('Asia/Jakarta'),
-    cleared_time_dt Nullable(DateTime('Asia/Jakarta')),
-    duration_seconds UInt32 MATERIALIZED (if(cleartime = 0, toUInt32(now() - alarm_start), toUInt32(ifNull(cleared_time_dt, alarm_start) - alarm_start))),
-    acknowledged LowCardinality(String) DEFAULT '0',
-    totalcount UInt32 DEFAULT 1,
-    raw_attributes String,
-    ingested_at DateTime DEFAULT now()
-)
-ENGINE = MergeTree()
-PARTITION BY toYYYYMM(alarm_start)
-ORDER BY (cleartime, location, severity, firstoccurrence, identifier);
-```
+### 1. Configure Environment
 
----
-
-## Panduan Menjalankan Aplikasi (*Getting Started*)
-
-### 1. Prasyarat
-* [Rust Toolchain](https://www.rust-lang.org/) (versi 1.75 atau lebih baru)
-* Instance [PostgreSQL](https://www.postgresql.org/) aktif (`localhost:5432`)
-* Instance [ClickHouse](https://clickhouse.com/) aktif (`localhost:8123` & `9000`)
-* Docker & Docker Compose (untuk Kafka cluster)
-
-### 2. Menjalankan Kafka Cluster & Kafdrop UI
-```bash
-docker compose -f docker-compose-kafka.yml up -d
-```
-* Buka browser di `http://localhost:9002` untuk melihat antrean Kafka.
-
-### 3. Konfigurasi Environment
-Salin template konfigurasi dan sesuaikan kredensial koneksi:
 ```bash
 cp .env.example .env
 ```
 
-Contoh isi berkas `.env`:
+Key environment variables (see `.env.example` and `runbook.md` for full matrix):
+
 ```ini
 PORT=3000
-DATABASE_URL=postgres://postgres:default@localhost:5432/postgres
+RUST_LOG=braincode_be=info,tower_http=info
+ALLOWED_ORIGINS=http://localhost:3000,http://localhost:5173
+DATABASE_URL=postgres://postgres:password_placeholder@localhost:5432/braincode_db
 CLICKHOUSE_URL=http://localhost:8123
 CLICKHOUSE_USER=default
 CLICKHOUSE_PASSWORD=
 CLICKHOUSE_DB=default
 ```
 
-### 4. Eksekusi CSV Ingestion (194k Baris Alarm)
-Jalankan binary pengimpor data:
-```bash
-cargo run --bin ingest_csv
-```
+### 2. Common Makefile Targets
 
-### 5. Menjalankan Unit Tests
 ```bash
-cargo test
+make fmt-check     # Verify formatting with rustfmt
+make lint          # Run cargo clippy --all-targets -- -D warnings
+make test          # Run all unit tests + 11 offline integration test suites
+make build         # Compile optimized release binaries (--locked)
+make run           # Start API server locally on PORT (default 3000)
+make ingest        # Run streaming CSV -> ClickHouse ingestion binary
+make docker-up     # Launch PostgreSQL + ClickHouse + braincode-be via Docker Compose
+make docker-down   # Stop Docker Compose services
 ```
-*Seluruh 3 unit test (Happy Path, Format Validasi, dan Negative Test start > end) akan lulus otomatis.*
-
-### 6. Menjalankan Server API
-```bash
-cargo run
-```
-Server akan aktif mendengarkan request di `http://localhost:3000`.
 
 ---
 
-## Dokumentasi Endpoint REST API
+## REST API Endpoints
 
-### 1. Health Check Probe
-* **Method:** `GET`
-* **Path:** `/health`
-* **Sample Response (200 OK):**
+### Health Check
+
+- **Method & Path**: `GET /health`
+- **Response (`200 OK`)**:
   ```json
   {
     "status": "ok",
     "service": "braincode-be",
-    "message": "Server Berjalan dengan normal"
+    "message": "Server berjalan dengan normal."
   }
   ```
 
----
+### User Management (PostgreSQL OLTP + ClickHouse OLAP Audit Trail)
 
-### 2. Active Alarm List (Spesifikasi Issue #2)
-* **Method:** `POST`
-* **Path:** `/alarm_list_active` *(alias: `/api/v1/alarms/active`)*
-* **Headers:** `Content-Type: application/json`
-* **Sample Request Body:**
+- **List Users**: `GET /api/v1/users` (`200 OK`)
+- **Create User**: `POST /api/v1/users` (`201 Created`)
+  ```json
+  {
+    "name": "Budi Santoso",
+    "email": "budi@example.com"
+  }
+  ```
+- **Recent Activities**: `GET /api/v1/analytics/activities` (`200 OK`)
+
+### Active Alarm Service (ClickHouse OLAP)
+
+- **Method & Paths**: `POST /alarm_list_active` (alias: `POST /api/v1/alarms/active`)
+- **Request Body**:
   ```json
   {
     "start_date": "2026-09-08",
     "end_date": "2026-09-14"
   }
   ```
-* **Sample Response (200 OK):**
+- **Response (`200 OK`)**:
   ```json
   {
     "status_code": "200",
     "result": [
       {
-        "identifier": "1789218152000_cdf52eaa5d5abe0b734f9b69c6708b3bcb95b7cc4ef854f8a9b77c923a9d6049",
+        "identifier": "ALARM-001",
         "alarmname": "ONU is Disconnected",
         "severity": 4,
         "sitecode": "RAP",
@@ -306,35 +206,19 @@ Server akan aktif mendengarkan request di `http://localhost:3000`.
         "acknowledged": "0"
       }
     ],
-    "total": 192683
+    "total": 1
   }
   ```
-* **Negative Test (400 Bad Request):**
-  Jika `start_date` lebih besar dari `end_date`:
-  ```json
-  {
-    "message": "start_date tidak boleh lebih besar dari end_date"
-  }
-  ```
+- **Validation Error (`400 Bad Request`)**: Returned when dates do not match `YYYY-MM-DD` or `start_date > end_date`.
 
 ---
 
-### 3. Pendaftaran Pengguna Baru (PostgreSQL + ClickHouse)
-* **Method:** `POST`
-* **Path:** `/api/v1/users`
-* **Sample Request Body:**
-  ```json
-  {
-    "name": "Budi Santoso",
-    "email": "budi@example.com"
-  }
-  ```
+## Streaming CSV Ingestion (`ingest_csv`)
 
----
+Load semicolon-delimited alarm exports into ClickHouse in 15,000-row `JSONEachRow` batches with zero attribute loss:
 
-### 4. Pengujian Otomatis via PowerShell
-Telah disediakan skrip pengujian otomatis:
-```powershell
-.\test_alarm_service.ps1
+```bash
+cargo run --release --bin ingest_csv -- path/to/alarm_export.csv
 ```
-Skrip ini akan menguji secara sekuensial: Health check, Happy path date range, dan Negative test validasi bisnis.
+
+See [runbook.md](runbook.md) for migration execution, operational monitoring, troubleshooting playbooks, and rollback procedures.
