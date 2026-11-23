@@ -142,7 +142,7 @@ dependencies = [
 
 [[package]]
 name = "braincode-be"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -151,6 +151,7 @@ dependencies = [
  "clickhouse",
  "csv",
  "dotenvy",
+ "http-body-util",
  "indicatif",
  "reqwest",
  "serde",
@@ -158,6 +159,7 @@ dependencies = [
  "sqlx",
  "thiserror 2.0.20",
  "tokio",
+ "tower",
  "tower-http 0.5.2",
  "tracing",
  "tracing-subscriber",
