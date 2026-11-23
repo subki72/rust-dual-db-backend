@@ -1,15 +1,20 @@
+//! PostgreSQL implementation of [`UserRepository`] using parameterized SQLx queries.
+
 use async_trait::async_trait;
+use sqlx::PgPool;
+
 use crate::models::User;
 use crate::repositories::traits::UserRepository;
 use crate::utils::AppError;
-use sqlx::PgPool;
 
+/// Data access object backed by a shared PostgreSQL [`PgPool`].
 #[derive(Clone)]
 pub struct PostgresUserRepository {
     pool: PgPool,
 }
 
 impl PostgresUserRepository {
+    /// Creates a new [`PostgresUserRepository`] wrapping the provided connection pool.
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
     }
@@ -44,12 +49,10 @@ impl UserRepository for PostgresUserRepository {
     }
 
     async fn find_by_email(&self, email: &str) -> Result<Option<User>, AppError> {
-        let user = sqlx::query_as::<_, User>(
-            "SELECT id, name, email FROM users WHERE email = $1;",
-        )
-        .bind(email)
-        .fetch_optional(&self.pool)
-        .await?;
+        let user = sqlx::query_as::<_, User>("SELECT id, name, email FROM users WHERE email = $1;")
+            .bind(email)
+            .fetch_optional(&self.pool)
+            .await?;
 
         Ok(user)
     }

@@ -1,19 +1,26 @@
-use crate::models::User;
-use serde::Serialize;
+//! Response DTO projecting a domain [`User`] entity for external clients.
 
-#[derive(Debug, Serialize)]
+use serde::{Deserialize, Serialize};
+
+use crate::models::User;
+
+/// Public API representation of a persisted user account.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct UserResponse {
+    /// Surrogate primary key assigned by PostgreSQL.
     pub id: i32,
+    /// User display name.
     pub name: String,
+    /// Registered user email address.
     pub email: String,
 }
 
 impl From<User> for UserResponse {
-    fn from(u: User) -> Self {
+    fn from(user: User) -> Self {
         Self {
-            id: u.id,
-            name: u.name,
-            email: u.email,
+            id: user.id,
+            name: user.name,
+            email: user.email,
         }
     }
 }

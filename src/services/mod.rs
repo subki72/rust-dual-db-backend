@@ -1,5 +1,5 @@
-pub mod traits;
 pub mod impls;
+pub mod traits;
 
-pub use traits::*;
 pub use impls::*;
+pub use traits::*;

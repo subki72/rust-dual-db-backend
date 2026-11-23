@@ -1,7 +1,7 @@
-use async_trait::async_trait;
 use crate::dtos::{CreateUserRequest, UserResponse};
 use crate::models::UserActivity;
 use crate::utils::AppError;
+use async_trait::async_trait;
 
 #[async_trait]
 pub trait UserService: Send + Sync {

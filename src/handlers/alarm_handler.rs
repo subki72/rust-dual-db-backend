@@ -1,17 +1,20 @@
-use axum::{
-    extract::State,
-    http::StatusCode,
-    response::IntoResponse,
-    Json,
-};
+//! HTTP handler for active alarm queries (`/alarm_list_active` and `/api/v1/alarms/active`).
+
 use std::sync::Arc;
+
+use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
+
 use crate::dtos::AlarmActiveRequest;
 use crate::services::traits::AlarmService;
 use crate::utils::AppError;
 
-/// Handler untuk endpoint POST /alarm_list_active
-/// Menerima parameter rentang tanggal: { "start_date": "YYYY-MM-DD", "end_date": "YYYY-MM-DD" }
-/// Mengembalikan daftar alarm aktif (cleartime = 0)
+/// Handles `POST /alarm_list_active` and `POST /api/v1/alarms/active`.
+///
+/// Accepts a JSON date range `{ "start_date": "YYYY-MM-DD", "end_date": "YYYY-MM-DD" }`
+/// and returns active alarms (`cleartime = 0`).
+///
+/// # Errors
+/// Propagates [`AppError`] on invalid date formats, inverted ranges, or ClickHouse query failure.
 pub async fn get_alarm_list_active(
     State(alarm_service): State<Arc<dyn AlarmService>>,
     Json(payload): Json<AlarmActiveRequest>,

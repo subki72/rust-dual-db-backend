@@ -1,16 +1,22 @@
-use async_trait::async_trait;
-use chrono::NaiveDate;
+//! Concrete implementation of [`AlarmService`] for querying active network alarms.
+
 use std::sync::Arc;
+
+use async_trait::async_trait;
+
 use crate::dtos::{AlarmActiveRequest, AlarmActiveResponse};
 use crate::repositories::traits::AlarmRepository;
 use crate::services::traits::AlarmService;
+use crate::utils::validation::validate_date_range;
 use crate::utils::AppError;
 
+/// Domain service enforcing date-range validation before querying ClickHouse active alarms.
 pub struct AlarmServiceImpl {
     alarm_repo: Arc<dyn AlarmRepository>,
 }
 
 impl AlarmServiceImpl {
+    /// Creates a new [`AlarmServiceImpl`] with an injected [`AlarmRepository`].
     pub fn new(alarm_repo: Arc<dyn AlarmRepository>) -> Self {
         Self { alarm_repo }
     }
@@ -18,23 +24,25 @@ impl AlarmServiceImpl {
 
 #[async_trait]
 impl AlarmService for AlarmServiceImpl {
-    async fn get_active_alarms(&self, req: AlarmActiveRequest) -> Result<AlarmActiveResponse, AppError> {
-        // 1. Validasi Format Tanggal YYYY-MM-DD
-        let start = NaiveDate::parse_from_str(&req.start_date, "%Y-%m-%d")
-            .map_err(|_| AppError::ValidationError(format!("Format start_date tidak valid: '{}'. Gunakan format YYYY-MM-DD.", req.start_date)))?;
+    async fn get_active_alarms(
+        &self,
+        req: AlarmActiveRequest,
+    ) -> Result<AlarmActiveResponse, AppError> {
+        validate_date_range(&req.start_date, &req.end_date)?;
 
-        let end = NaiveDate::parse_from_str(&req.end_date, "%Y-%m-%d")
-            .map_err(|_| AppError::ValidationError(format!("Format end_date tidak valid: '{}'. Gunakan format YYYY-MM-DD.", req.end_date)))?;
-
-        if start > end {
-            return Err(AppError::ValidationError("start_date tidak boleh lebih besar dari end_date.".to_string()));
-        }
-
-        // 2. Query ke Repository ClickHouse
-        let alarms = self.alarm_repo.find_active_by_date_range(&req.start_date, &req.end_date).await?;
+        let alarms = self
+            .alarm_repo
+            .find_active_by_date_range(req.start_date.trim(), req.end_date.trim())
+            .await?;
         let total = alarms.len();
 
-        // 3. Format Response persis sesuai Acceptance Criteria GitHub Issue #2
+        tracing::info!(
+            start_date = %req.start_date,
+            end_date = %req.end_date,
+            total,
+            "Query alarm aktif selesai"
+        );
+
         Ok(AlarmActiveResponse {
             status_code: "200".to_string(),
             result: alarms,

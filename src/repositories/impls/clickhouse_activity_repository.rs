@@ -1,15 +1,20 @@
+//! ClickHouse implementation of [`ActivityRepository`] for analytical audit logging.
+
 use async_trait::async_trait;
+use clickhouse::Client;
+
 use crate::models::UserActivity;
 use crate::repositories::traits::ActivityRepository;
 use crate::utils::AppError;
-use clickhouse::Client;
 
+/// Data access object writing and querying `user_activities` in ClickHouse.
 #[derive(Clone)]
 pub struct ClickHouseActivityRepository {
     client: Client,
 }
 
 impl ClickHouseActivityRepository {
+    /// Creates a new [`ClickHouseActivityRepository`] using the shared ClickHouse [`Client`].
     pub fn new(client: Client) -> Self {
         Self { client }
     }

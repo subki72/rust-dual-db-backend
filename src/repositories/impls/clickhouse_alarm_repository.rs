@@ -1,15 +1,20 @@
+//! ClickHouse implementation of [`AlarmRepository`] enforcing the mandatory `cleartime = 0` filter.
+
 use async_trait::async_trait;
+use clickhouse::Client;
+
 use crate::dtos::AlarmItemDto;
 use crate::repositories::traits::AlarmRepository;
 use crate::utils::AppError;
-use clickhouse::Client;
 
+/// Data access object querying active alarms from ClickHouse `active_alarms`.
 #[derive(Clone)]
 pub struct ClickHouseAlarmRepository {
     client: Client,
 }
 
 impl ClickHouseAlarmRepository {
+    /// Creates a new [`ClickHouseAlarmRepository`] using the shared ClickHouse [`Client`].
     pub fn new(client: Client) -> Self {
         Self { client }
     }
@@ -22,22 +27,20 @@ impl AlarmRepository for ClickHouseAlarmRepository {
         start_date: &str,
         end_date: &str,
     ) -> Result<Vec<AlarmItemDto>, AppError> {
-        // Query sesuai spesifikasi GitHub Issue #2:
-        // 1. cleartime = 0 (Mandatory active filter, tidak bisa di-override)
-        // 2. Filter rentang tanggal pada kolom firstoccurrence (mendukung format ms maupun detik)
+        // Enforce cleartime = 0 at the repository layer so callers cannot bypass active filtering.
         let query = "
-            SELECT 
-                identifier, 
-                alarmname, 
-                severity, 
-                sitecode, 
-                node, 
-                firstoccurrence, 
-                cleartime, 
+            SELECT
+                identifier,
+                alarmname,
+                severity,
+                sitecode,
+                node,
+                firstoccurrence,
+                cleartime,
                 acknowledged
             FROM active_alarms
             WHERE cleartime = 0
-              AND toDate(intDiv(firstoccurrence, if(firstoccurrence > 10000000000, 1000, 1))) 
+              AND toDate(intDiv(firstoccurrence, if(firstoccurrence > 10000000000, 1000, 1)))
                   BETWEEN toDate(?) AND toDate(?)
             ORDER BY firstoccurrence DESC
             LIMIT 500

@@ -1,6 +1,6 @@
-use async_trait::async_trait;
 use crate::dtos::AlarmItemDto;
 use crate::utils::AppError;
+use async_trait::async_trait;
 
 #[async_trait]
 pub trait AlarmRepository: Send + Sync {
